@@ -141,14 +141,14 @@ def save_csv(events):
 # Preview window
 # ----------------------------
 def preview_events(events):
-    result = {"ok": False}
+    result = {"ok": False, "events": events}
     preview = tk.Toplevel()
-    preview.title("Preview Events")
+    preview.title("Preview Events — Edit as needed")
     # Use a larger default size and a reasonable minimum so buttons are visible
     preview.geometry("800x500")
     preview.minsize(640, 380)
 
-    tk.Label(preview, text="Preview — confirm to generate CSV", font=(None, 11, "bold")).pack(anchor="w", padx=8, pady=(6,0))
+    tk.Label(preview, text="Preview — edit and confirm to generate CSV", font=(None, 11, "bold")).pack(anchor="w", padx=8, pady=(6,0))
     text = scrolledtext.ScrolledText(preview, wrap=tk.WORD)
     text.pack(expand=True, fill=tk.BOTH, padx=8, pady=(4,0))
     for e in events:
@@ -156,10 +156,59 @@ def preview_events(events):
         end_time = e["End Time"] if e["End Time"] else ""
         line = f'{e["Start Date"]} {start_time}-{end_time} {e["Subject"]}\n'
         text.insert(tk.END, line)
-    text.config(state=tk.DISABLED)
+
+    def parse_preview_text():
+        """Parse the edited text back into events"""
+        text_content = text.get("1.0", tk.END)
+        lines = text_content.strip().split('\n')
+        parsed_events = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Parse format: MM/DD/YYYY HH:MM-HH:MM Title
+            # or: MM/DD/YYYY Title (no times)
+            match = re.match(r'(\d{1,2}/\d{1,2}/\d{4})\s+((\d{1,2}:\d{2})?-?(\d{1,2}:\d{2})?)?\s+(.*)', line)
+            if match:
+                date_str = match.group(1)
+                time_range = match.group(2) if match.group(2) else ""
+                subject = match.group(5).strip()
+                
+                start_time = ""
+                end_time = ""
+                all_day = "True"
+                
+                if time_range and "-" in time_range:
+                    parts = time_range.split('-')
+                    start_time = parts[0].strip()
+                    end_time = parts[1].strip() if len(parts) > 1 else ""
+                    all_day = "False"
+                elif time_range:
+                    start_time = time_range.strip()
+                    all_day = "False"
+                
+                parsed_events.append({
+                    "Subject": subject,
+                    "Start Date": date_str,
+                    "Start Time": start_time,
+                    "End Date": date_str if end_time else "",
+                    "End Time": end_time,
+                    "All Day Event": all_day,
+                    "Description": "",
+                    "Location": ""
+                })
+        
+        return parsed_events if parsed_events else None
 
     def on_generate():
+        parsed = parse_preview_text()
+        if parsed is None:
+            messagebox.showerror("Error", "Could not parse edited events. Check the format.")
+            return
         result["ok"] = True
+        result["events"] = parsed
         preview.destroy()
 
     def on_back():
@@ -167,7 +216,7 @@ def preview_events(events):
 
     btn_frame = tk.Frame(preview)
     btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=8)
-    tk.Button(btn_frame, text="Generate CSV", width=14, bg="green", fg="white", font=(None, 10, "bold"), command=on_generate).pack(side=tk.LEFT, padx=8)
+    tk.Button(btn_frame, text="Generate CSV", width=15, bg="green", fg="white", font=(None, 10, "bold"), command=on_generate).pack(side=tk.LEFT, padx=8)
     tk.Button(btn_frame, text="Go back", width=10, command=on_back).pack(side=tk.LEFT, padx=8)
 
     try:
@@ -187,7 +236,7 @@ def preview_events(events):
         pass
 
     preview.wait_window()
-    return result["ok"]
+    return result["ok"], result["events"]
 
 # ----------------------------
 # GUI
@@ -202,7 +251,7 @@ def generate_csv():
     if not events:
         messagebox.showerror("Error", "No events found")
         return
-    ok = preview_events(events)
+    ok, events = preview_events(events)
     if not ok:
         return
     save_csv(events)
