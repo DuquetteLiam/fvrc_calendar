@@ -98,8 +98,11 @@ def parse_schedule(text, year):
         if not line or line.startswith("*"):
             continue
 
-        # Detect day (like '23 Mon', '24 Tues') and capture any trailing events on same line
-        day_match = re.match(r'(\d{1,2})\s+\w+(.*)', line)
+        # Detect day lines (e.g. '23 Mon', '24 Tues', '5 Friday') and capture any trailing events
+        # only match if the word after the number is a weekday name/abbreviation
+        day_match = re.match(
+            r'(\d{1,2})\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*(.*)',
+            line, re.IGNORECASE)
         if day_match:
             day = int(day_match.group(1))
             trailing = day_match.group(2).strip()
@@ -173,12 +176,16 @@ def parse_schedule(text, year):
                 all_day = "True"
             if not desc:
                 desc = item
+            # For start-only (all_day==True and original had a start), do NOT include start/end times in CSV
+            csv_start_time = "" if (all_day == "True" and start_time) else (start_time if start_time else "")
+            csv_end_date = current_date.strftime("%m/%d/%Y") if (end_time and all_day == "False") else ""
+            csv_end_time = end_time if (end_time and all_day == "False") else ""
             events.append({
                 "Subject": desc,
                 "Start Date": current_date.strftime("%m/%d/%Y"),
-                "Start Time": start_time if start_time else "",
-                "End Date": current_date.strftime("%m/%d/%Y") if end_time else "",
-                "End Time": end_time if end_time else "",
+                "Start Time": csv_start_time,
+                "End Date": csv_end_date,
+                "End Time": csv_end_time,
                 "All Day Event": all_day,
                 "Description": "",
                 "Location": ""
