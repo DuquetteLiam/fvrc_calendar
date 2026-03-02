@@ -19,13 +19,16 @@ def open_file(path):
         os.system(f'xdg-open "{path}"')
 
 def parse_time_range(text):
-    """Return start_time, end_time in HH:MM 24h format; end_time can be None"""
+    """Return start_time, end_time in HH:MM 24h format; end_time can be None.
+    Searches anywhere in the string so that times embedded in descriptions are
+    detected. If no valid range is found, returns (None, None)."""
     text = text.replace("–", "-")
     time_pattern = r'(\d{1,2}(:\d{2})?)\s*(am|pm)?\s*(?:-\s*(\d{1,2}(:\d{2})?)\s*(am|pm)?)?'
-    match = re.match(time_pattern, text.strip(), re.IGNORECASE)
+    match = re.search(time_pattern, text.strip(), re.IGNORECASE)
     if not match:
         return None, None
     start, _, start_ampm, end, _, end_ampm = match.groups()
+    
     def to_24h(t, ampm):
         t = t.strip()
         if ':' not in t:
@@ -37,9 +40,37 @@ def parse_time_range(text):
                 h += 12
             if ampm == 'am' and h == 12:
                 h = 0
-        return f"{h:02d}:{m:02d}"
-    start24 = to_24h(start, start_ampm)
-    end24 = to_24h(end, end_ampm) if end else None
+        return h, m, f"{h:02d}:{m:02d}"
+    
+    start_h, start_m, start24 = to_24h(start, start_ampm)
+    
+    # if end has am/pm and start doesn't, match start to end
+    if end_ampm and not start_ampm:
+        if end_ampm.lower() == 'am':
+            # if start > end hour, wrap into same morning
+            if start_h > int(end.split(':')[0]):
+                # keep as-is (e.g. 3-5am) start_h already <12
+                pass
+            start24 = f"{start_h:02d}:{start_m:02d}"
+        else:
+            # pm case
+            if start_h < 12:
+                start_h += 12
+                start24 = f"{start_h:02d}:{start_m:02d}"
+    # if still no am/pm, assume pm for early afternoon/evening times 1-8
+    elif not start_ampm and 1 <= start_h <= 8:
+        start_h += 12
+        start24 = f"{start_h:02d}:{start_m:02d}"
+
+    if end:
+        end_h, end_m, end24 = to_24h(end, end_ampm)
+        # if end is not explicitly marked and is less than start, assume it's PM
+        if not end_ampm and end_h < 12 and end_h < start_h:
+            end_h += 12
+            end24 = f"{end_h:02d}:{end_m:02d}"
+    else:
+        end24 = None
+    
     return start24, end24
 
 # ----------------------------
@@ -51,6 +82,9 @@ def parse_schedule(text, year):
     current_date = None
     start_month = None
     last_day = None
+
+    # common time range regex used for splitting and stripping
+    time_range_pattern = r"\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*-\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?"
 
     # Detect month from header line
     header_match = re.match(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)', lines[0].strip())
@@ -97,15 +131,46 @@ def parse_schedule(text, year):
         if current_date is None:
             continue
 
-        # Split multiple events in one line
-        items = re.split(r'•|\s{2,}', line)
+        # helper that splits line into event segments, even when adjacent times are smushed together
+        def split_events(text):
+            # first break on bullets or two-or-more spaces
+            parts = re.split(r'[•·]| {2,}', text)
+            out = []
+            for part in parts:
+                part = part.strip()
+                if not part:
+                    continue
+                matches = list(re.finditer(time_range_pattern, part, re.IGNORECASE))
+                if len(matches) <= 1:
+                    out.append(part)
+                else:
+                    starts = [m.start() for m in matches]
+                    for idx, start in enumerate(starts):
+                        end = starts[idx+1] if idx+1 < len(starts) else len(part)
+                        seg = part[start:end].strip(' ·•')
+                        if seg:
+                            out.append(seg)
+            return out
+
+        # Split multiple events in one line (handles smushed entries too)
+        items = split_events(line)
         for item in items:
             item = item.strip()
             if not item:
                 continue
             start_time, end_time = parse_time_range(item)
-            # Remove the time from the description
-            desc = re.sub(r'^(\d{1,2}(:\d{2})?\s*(am|pm)?\s*-?\s*\d{0,2}(:\d{2})?\s*(am|pm)?)\s*', '', item, flags=re.IGNORECASE).strip()
+            # decide how to treat the description and all-day flag
+            if start_time and not end_time:
+                # only a start is listed; keep the time in the title and mark as all-day
+                desc = item
+                all_day = "True"
+            elif start_time:
+                # full range known, strip it from the text
+                desc = re.sub(r'^' + time_range_pattern + r'\s*', '', item, flags=re.IGNORECASE).strip()
+                all_day = "False"
+            else:
+                desc = item
+                all_day = "True"
             if not desc:
                 desc = item
             events.append({
@@ -114,7 +179,7 @@ def parse_schedule(text, year):
                 "Start Time": start_time if start_time else "",
                 "End Date": current_date.strftime("%m/%d/%Y") if end_time else "",
                 "End Time": end_time if end_time else "",
-                "All Day Event": "True" if not start_time else "False",
+                "All Day Event": all_day,
                 "Description": "",
                 "Location": ""
             })
