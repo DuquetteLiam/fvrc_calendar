@@ -344,3 +344,5 @@ year_input.insert(0, str(datetime.now().year))
 tk.Button(root, text="Generate CSV", command=generate_csv, bg="green", fg="white", font=("Arial", 12)).pack(pady=10)
 
 root.mainloop()
+
+print("done")
